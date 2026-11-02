@@ -3,7 +3,16 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
+import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
+import {
+	createHarness,
+	getAssistantTexts,
+	getMessageText,
+	getUserTexts,
+	type Harness,
+	type HarnessOptions,
+} from "./harness.ts";
 
 async function createWaitingHarness(
 	options: {
@@ -11,6 +20,7 @@ async function createWaitingHarness(
 		extensionFactories?: Harness["session"]["extensionRunner"] extends never
 			? never
 			: Array<(pi: ExtensionAPI) => void>;
+		resourceLoader?: HarnessOptions["resourceLoader"];
 	} = {},
 ): Promise<{
 	harness: Harness;
@@ -38,6 +48,7 @@ async function createWaitingHarness(
 	const harness = await createHarness({
 		tools: [waitTool, ...(options.tools ?? [])],
 		extensionFactories: options.extensionFactories,
+		resourceLoader: options.resourceLoader,
 	});
 
 	const waitForToolStart = new Promise<void>((resolve) => {
@@ -197,6 +208,61 @@ describe("AgentSession queue characterization", () => {
 			]);
 			expect(harness.session.getSteeringMessages()).toEqual(["transformed: steer me"]);
 			expect(harness.session.getFollowUpMessages()).toEqual(["transformed: follow me"]);
+		} finally {
+			releaseToolExecution();
+		}
+		await promptPromise;
+	});
+
+	it("skips template expansion of queued input when the input transform opts out", async () => {
+		const extensionsResult = await createTestExtensionsResult([
+			(pi) => {
+				pi.on("input", (event) => {
+					if (event.text === "start") return { action: "continue" };
+					return {
+						action: "transform",
+						text: "/review src/index.ts",
+						expandPromptTemplates: event.text !== "literal",
+					};
+				});
+			},
+		]);
+		const waiting = await createWaitingHarness({
+			resourceLoader: {
+				...createTestResourceLoader({ extensionsResult }),
+				getPrompts: () => ({
+					prompts: [
+						{
+							name: "review",
+							description: "Review template",
+							content: "Review this code: $1",
+							filePath: "/virtual/review.md",
+							sourceInfo: createSyntheticSourceInfo("/virtual/review.md", {
+								source: "local",
+								scope: "temporary",
+								origin: "top-level",
+							}),
+						},
+					],
+					diagnostics: [],
+				}),
+			},
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("steered"),
+			fauxAssistantMessage("followed up"),
+		]);
+
+		await waitForToolStart;
+		try {
+			await harness.session.steer("literal");
+			await harness.session.followUp("expand");
+
+			expect(harness.session.getSteeringMessages()).toEqual(["/review src/index.ts"]);
+			expect(harness.session.getFollowUpMessages()).toEqual(["Review this code: src/index.ts"]);
 		} finally {
 			releaseToolExecution();
 		}

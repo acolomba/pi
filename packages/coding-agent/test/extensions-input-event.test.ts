@@ -75,6 +75,37 @@ describe("Input Event", () => {
 		expect(result).toEqual({ action: "transform", text: "X[1][2]", images: undefined });
 	});
 
+	it("returns expandPromptTemplates: false even when the text is unchanged", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => ({ action: "transform", text: e.text, expandPromptTemplates: false }));`,
+		);
+		const result = await r.emitInput("/review x", undefined, "interactive");
+		expect(result).toEqual({
+			action: "transform",
+			text: "/review x",
+			images: undefined,
+			expandPromptTemplates: false,
+		});
+	});
+
+	it("keeps expandPromptTemplates from an earlier transform when a later one omits it", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => ({ action: "transform", text: "/x " + e.text, expandPromptTemplates: false }));`,
+			`export default p => p.on("input", async e => ({ action: "transform", text: e.text + "[2]" }));`,
+		);
+		const result = await r.emitInput("y", undefined, "interactive");
+		expect(result).toEqual({ action: "transform", text: "/x y[2]", images: undefined, expandPromptTemplates: false });
+	});
+
+	it("lets a later transform override expandPromptTemplates", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => ({ action: "transform", text: e.text, expandPromptTemplates: false }));`,
+			`export default p => p.on("input", async e => ({ action: "transform", text: e.text, expandPromptTemplates: true }));`,
+		);
+		const result = await r.emitInput("y", undefined, "interactive");
+		expect(result).toEqual({ action: "transform", text: "y", images: undefined, expandPromptTemplates: true });
+	});
+
 	it("short-circuits on handled and skips subsequent handlers", async () => {
 		(globalThis as any).testVar = false;
 		const r = await createRunner(

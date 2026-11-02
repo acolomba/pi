@@ -1531,6 +1531,7 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		let currentText = text;
 		let currentImages = images;
+		let expandPromptTemplates: boolean | undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "input")) {
 			for (const handler of handlers) {
@@ -1547,6 +1548,8 @@ export class ExtensionRunner {
 					if (result?.action === "transform") {
 						currentText = result.text;
 						currentImages = result.images ?? currentImages;
+						// A later handler sees text an earlier handler may have expanded, so omitting the option keeps the earlier choice.
+						expandPromptTemplates = result.expandPromptTemplates ?? expandPromptTemplates;
 					}
 				} catch (err) {
 					this.emitError({
@@ -1557,6 +1560,9 @@ export class ExtensionRunner {
 					});
 				}
 			}
+		}
+		if (expandPromptTemplates !== undefined) {
+			return { action: "transform", text: currentText, images: currentImages, expandPromptTemplates };
 		}
 		return currentText !== text || currentImages !== images
 			? { action: "transform", text: currentText, images: currentImages }

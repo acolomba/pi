@@ -1203,7 +1203,13 @@ export interface InputEvent {
 /** Result from input event handler */
 export type InputEventResult =
 	| { action: "continue" }
-	| { action: "transform"; text: string; images?: ImageContent[] }
+	| {
+			action: "transform";
+			text: string;
+			images?: ImageContent[];
+			/** Expand skill commands and prompt templates in the transformed text. Default: true. */
+			expandPromptTemplates?: boolean;
+	  }
 	| { action: "handled" };
 
 // ============================================================================

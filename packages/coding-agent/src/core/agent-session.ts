@@ -2064,9 +2064,9 @@ export class AgentSession {
 		images: ImageContent[] | undefined,
 		source: InputSource,
 		streamingBehavior?: "steer" | "followUp",
-	): Promise<{ text: string; images: ImageContent[] | undefined } | undefined> {
+	): Promise<{ text: string; images: ImageContent[] | undefined; expandPromptTemplates: boolean } | undefined> {
 		if (!this._extensionRunner.hasHandlers("input")) {
-			return { text, images };
+			return { text, images, expandPromptTemplates: true };
 		}
 
 		const inputResult = await this._extensionRunner.emitInput(text, images, source, streamingBehavior);
@@ -2074,9 +2074,13 @@ export class AgentSession {
 			return undefined;
 		}
 		if (inputResult.action === "transform") {
-			return { text: inputResult.text, images: inputResult.images ?? images };
+			return {
+				text: inputResult.text,
+				images: inputResult.images ?? images,
+				expandPromptTemplates: inputResult.expandPromptTemplates ?? true,
+			};
 		}
-		return { text, images };
+		return { text, images, expandPromptTemplates: true };
 	}
 
 	private async _normalizePromptImages(
@@ -2149,7 +2153,7 @@ export class AgentSession {
 
 		// Expand skill commands (/skill:name args) and prompt templates (/template args)
 		let expandedText = currentText;
-		if (expandPromptTemplates) {
+		if (expandPromptTemplates && processedInput.expandPromptTemplates) {
 			expandedText = this._expandSkillCommand(expandedText);
 			expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 		}
@@ -2273,8 +2277,11 @@ export class AgentSession {
 		);
 		if (!processedInput) return "handled";
 
-		let expandedText = this._expandSkillCommand(processedInput.text);
-		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		let expandedText = processedInput.text;
+		if (processedInput.expandPromptTemplates) {
+			expandedText = this._expandSkillCommand(expandedText);
+			expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		}
 
 		if (behavior === "steer") {
 			await this._queueSteer(expandedText, processedInput.images);

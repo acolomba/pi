@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BeforeAgentStartEvent, ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
-import { createTestResourceLoader } from "../utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 const processImage = vi.hoisted(() =>
@@ -314,6 +314,82 @@ describe("AgentSession prompt characterization", () => {
 		await harness.session.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
 
 		expect(expandedPrompt).toBe("Review this code: src/index.ts");
+	});
+
+	it("skips template and skill expansion of transformed input when the transform opts out", async () => {
+		const template: PromptTemplate = {
+			name: "review",
+			description: "Review template",
+			content: "Review this code: $1",
+			filePath: "/virtual/review.md",
+			sourceInfo: createSyntheticSourceInfo("/virtual/review.md", {
+				source: "local",
+				scope: "temporary",
+				origin: "top-level",
+			}),
+		};
+		const extensionsResult = await createTestExtensionsResult([
+			(pi) => {
+				pi.on("input", (event) => {
+					if (event.text === "literal") {
+						return { action: "transform", text: "/review src/index.ts", expandPromptTemplates: false };
+					}
+					if (event.text === "skill") {
+						return { action: "transform", text: "/skill:test body", expandPromptTemplates: false };
+					}
+					if (event.text === "expand skill") return { action: "transform", text: "/skill:test body" };
+					return { action: "transform", text: "/review src/index.ts" };
+				});
+			},
+		]);
+		const tempDir = join(tmpdir(), `pi-skill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		tempDirs.push(tempDir);
+		const skillPath = join(tempDir, "test-skill.md");
+		writeFileSync(skillPath, "# Test Skill\n\nUse the skill body.");
+		const resourceLoader = {
+			...createTestResourceLoader({ extensionsResult }),
+			getPrompts: () => ({ prompts: [template], diagnostics: [] }),
+			getSkills: () => ({
+				skills: [
+					{
+						name: "test",
+						description: "Test skill",
+						filePath: skillPath,
+						disableModelInvocation: false,
+						baseDir: tempDir,
+						sourceInfo: createSyntheticSourceInfo(skillPath, {
+							source: "local",
+							scope: "project",
+							origin: "top-level",
+							baseDir: tempDir,
+						}),
+					},
+				],
+				diagnostics: [],
+			}),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		const sentPrompts: string[] = [];
+		const capturePrompt = (context: TranscriptContext) => {
+			const user = context.messages.filter((message) => message.role === "user").at(-1);
+			sentPrompts.push(user ? getMessageText(user) : "");
+			return fauxAssistantMessage("ok");
+		};
+		harness.setResponses([capturePrompt, capturePrompt, capturePrompt, capturePrompt]);
+
+		await harness.session.prompt("literal");
+		await harness.session.prompt("skill");
+		await harness.session.prompt("expand");
+		await harness.session.prompt("expand skill");
+
+		expect(sentPrompts.slice(0, 3)).toEqual([
+			"/review src/index.ts",
+			"/skill:test body",
+			"Review this code: src/index.ts",
+		]);
+		expect(sentPrompts[3]).toContain("Use the skill body.");
 	});
 
 	it("dispatches extension commands without consuming a provider response", async () => {

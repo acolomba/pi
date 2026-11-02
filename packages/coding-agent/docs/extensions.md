@@ -1114,8 +1114,8 @@ Fired when user input is received, after extension commands are checked but befo
 **Processing order:**
 1. Extension commands (`/cmd`) checked first - if found, handler runs and input event is skipped. Messages from `pi.sendUserMessage()` are checked only with `expandPromptTemplates: true`.
 2. `input` event fires - can intercept, transform, or handle
-3. If not handled: skill commands (`/skill:name`) expanded to skill content
-4. If not handled: prompt templates (`/template`) expanded to template content
+3. If not handled: skill commands (`/skill:name`) expanded to skill content, unless a transform set `expandPromptTemplates: false`
+4. If not handled: prompt templates (`/template`) expanded to template content, unless a transform set `expandPromptTemplates: false`
 5. Agent processing begins (`before_agent_start`, etc.)
 
 ```typescript
@@ -1151,10 +1151,18 @@ pi.on("input", async (event, ctx) => {
 
 **Results:**
 - `continue` - pass through unchanged (default if handler returns nothing)
-- `transform` - modify text/images, then continue to expansion
+- `transform` - modify text/images, then continue to expansion. Set `expandPromptTemplates: false` to skip skill command and prompt template expansion of the transformed text, for example when the handler already expanded a command and its result may itself start with `/`
 - `handled` - skip agent entirely (first handler to return this wins)
 
-Transforms chain across handlers. See [input-transform.ts](../examples/extensions/input-transform.ts) and [input-transform-streaming.ts](../examples/extensions/input-transform-streaming.ts) for `streamingBehavior`-aware routing.
+```typescript
+pi.on("input", async (event) => {
+  if (!event.text.startsWith("/my-command")) return { action: "continue" };
+  // The expanded body is sent as is, even if it starts with `/template` or `/skill:name`
+  return { action: "transform", text: expandMyCommand(event.text), expandPromptTemplates: false };
+});
+```
+
+Transforms chain across handlers. A later transform that omits `expandPromptTemplates` keeps the value an earlier handler set. See [input-transform.ts](../examples/extensions/input-transform.ts) and [input-transform-streaming.ts](../examples/extensions/input-transform-streaming.ts) for `streamingBehavior`-aware routing.
 
 <a id="use-extension-context"></a>
 
